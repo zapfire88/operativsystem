@@ -1,4 +1,4 @@
-#include "parser.h"
+#include "parser.h"    // cmd_t, position_t, parse_commands()
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -7,68 +7,112 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <fcntl.h>     //fcntl(), F_GETFL
 
 #define READ  0
 #define WRITE 1
 
+/**
+ * For simplicitiy we use a global array to store data of each command in a
+ * command pipeline .
+ */
+cmd_t commands[MAX_COMMANDS];
+
+/**
+ *  Debug printout of the commands array.
+ */
+void print_commands(int n) {
+  for (int i = 0; i < n; i++) {
+    printf("==> commands[%d]\n", i);
+    printf("  pos = %s\n", position_to_string(commands[i].pos));
+    printf("  in  = %d\n", commands[i].in);
+    printf("  out = %d\n", commands[i].out);
+
+    print_argv(commands[i].argv);
+  }
+
+}
+
+/**
+ * Returns true if file descriptor fd is open. Otherwise returns false.
+ */
+int is_open(int fd) {
+  return fcntl(fd, F_GETFL) != -1 || errno != EBADF;
+}
 
 void fork_error() {
   perror("fork() failed)");
   exit(EXIT_FAILURE);
 }
 
-
-void fork_cmd(char* argv[]) {
+/**
+ *  Fork a proccess for command with index i in the command pipeline. If needed,
+ *  create a new pipe and update the in and out members for the command..
+ */
+void fork_cmd(int i) {
   pid_t pid;
 
   switch (pid = fork()) {
     case -1:
       fork_error();
     case 0:
-      execvp(argv[0], argv);
-      perror("execvp");
+      // Child process after a successful fork().
+
+      // Execute the command in the contex of the child process.
+      execvp(commands[i].argv[0], commands[i].argv);
+
+      // If execvp() succeeds, this code should never be reached.
+      fprintf(stderr, "shell: command not found: %s\n", commands[i].argv[0]);
       exit(EXIT_FAILURE);
+
     default:
+      // Parent process after a successful fork().
+
       break;
   }
 }
 
-void fork_cmds(char* argvs[MAX_COMMANDS][MAX_ARGV], int n) {
+/**
+ *  Fork one child process for each command in the command pipeline.
+ */
+void fork_commands(int n) {
+
   for (int i = 0; i < n; i++) {
-    fork_cmd(argvs[i]);
+    fork_cmd(i);
   }
 }
 
+/**
+ *  Reads a command line from the user and stores the string in the provided
+ *  buffer.
+ */
 void get_line(char* buffer, size_t size) {
   getline(&buffer, &size, stdin);
   buffer[strlen(buffer)-1] = '\0';
 }
 
+/**
+ * Make the parents wait for all the child processes.
+ */
 void wait_for_all_cmds(int n) {
   // Not implemented yet!
-
-  for (int i = 0; i < n; i++) {
-    wait(NULL);
-  }
 }
 
 int main() {
-  int n;
-  char* argvs[MAX_COMMANDS][MAX_ARGV];
-  size_t size = 128;
-  char line[size];
+  int n;               // Number of commands in a command pipeline.
+  size_t size = 128;   // Max size of a command line string.
+  char line[size];     // Buffer for a command line string.
+
 
   while(true) {
-    printf(" >> ");
+    printf(" >>> ");
+
     get_line(line, size);
 
-    n = parse(line, argvs);
+    n = parse_commands(line, commands);
 
-    // Debug printouts.
-    printf("%d commands parsed.\n", n);
-    print_argvs(argvs);
+    fork_commands(n);
 
-    fork_cmds(argvs, n);
     wait_for_all_cmds(n);
   }
 
